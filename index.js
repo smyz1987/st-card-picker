@@ -409,7 +409,7 @@ if (!document.getElementById(STYLE_ID)) {
 .st-cp-moods { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
 .st-cp-mood { padding:5px 12px; border-radius:20px; cursor:pointer; font-size:12px; background:rgba(217,167,167,.15); color:#D9A7A7; }
 .st-cp-mood:hover { background:rgba(217,167,167,.3); }
-.st-cp-blind-first { font-size:13px; padding:10px; border-radius:8px; background:rgba(217,167,167,.1); margin:6px 0; font-style:italic; white-space:pre-wrap; word-break:break-all; line-height:1.6; }
+.st-cp-blind-first { font-size:13px; padding:10px; border-radius:8px; background:rgba(217,167,167,.1); margin:6px 0; white-space:pre-wrap; word-break:break-all; line-height:1.6; color:#F2C9C9; }
 `;
     document.head.appendChild(style);
 }
