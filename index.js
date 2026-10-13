@@ -60,48 +60,91 @@ async function llm(messages) {
 }
 
 // ---------- 智能匹配 ----------
-function buildCharListForPrompt() {
-    const chars = getAllChars();
-    const budget = 12000; // 总字符预算，超了自动压缩
-    const parts = [];
-    let used = 0;
-    for (const c of chars) {
-        const name = charName(c);
-        const tags = charTags(c);
-        const desc = charDesc(c, 180);
-        const first = charFirstMes(c, 120);
-        const block = '【' + name + '】' + (tags ? '\n标签: ' + tags : '') + (desc ? '\n人设: ' + desc : '') + (first ? '\n开场白: ' + first : '');
-        if (used + block.length > budget && parts.length) break;
-        parts.push(block);
-        used += block.length;
-    }
-    return parts.join('\n');
+const CHUNK_BUDGET = 12000;   // 单片字符预算（AI 每次只看这么多角色）
+const MAX_CHUNKS = 6;         // 最大分片数（角色再多也最多切 6 片，全库覆盖）
+
+function buildCharBlock(c) {
+    const name = charName(c);
+    const tags = charTags(c);
+    const desc = charDesc(c, 180);
+    const first = charFirstMes(c, 120);
+    return '【' + name + '】' + (tags ? '\n标签: ' + tags : '') + (desc ? '\n人设: ' + desc : '') + (first ? '\n开场白: ' + first : '');
 }
 
-async function matchCards(userInput) {
-    const list = buildCharListForPrompt();
-    const sys = '你是一位懂角色扮演、懂人物设定的选卡助手。用户会告诉你此刻想玩的「感觉/需求」，你要从给出的角色卡清单中挑选最适合的 ' + settings.topN + ' 张，按匹配度从高到低排列。' +
-        '判断依据：需求与角色人设、标签、开场白风格的契合度。' +
-        '只输出 JSON 数组，格式：[{"name":"角色名(必须与清单中的名字完全一致)","match":85,"reason":"为什么适合，结合具体人设点写"}]，不要输出其他内容。';
-    const user = '我现在的需求：' + userInput + '\n\n角色卡清单：\n' + list;
-    const out = await llm([
-        { role: 'system', content: sys },
-        { role: 'user', content: user },
-    ]);
-    // 容错解析：剥离 ```json 包裹
-    let cleaned = out.trim();
+function buildCharChunks() {
+    const chars = getAllChars();
+    if (!chars.length) return [];
+    // 先按预算顺序分片（每片 ≤ CHUNK_BUDGET 字符）
+    const chunks = [];
+    let cur = [];
+    let used = 0;
+    for (const c of chars) {
+        const block = buildCharBlock(c);
+        if (used + block.length > CHUNK_BUDGET && cur.length) {
+            chunks.push(cur);
+            cur = [];
+            used = 0;
+        }
+        cur.push(block);
+        used += block.length;
+    }
+    if (cur.length) chunks.push(cur);
+    // 角色特别多时，超过上限则摊平成 MAX_CHUNKS 片，保证全库都进视野
+    if (chunks.length > MAX_CHUNKS) {
+        const all = chunks.flat();
+        const per = Math.ceil(all.length / MAX_CHUNKS);
+        const merged = [];
+        for (let i = 0; i < all.length; i += per) merged.push(all.slice(i, i + per));
+        return merged;
+    }
+    return chunks;
+}
+
+function parseLLMArray(out) {
+    let cleaned = String(out).trim();
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     const start = cleaned.indexOf('[');
     const end = cleaned.lastIndexOf(']');
     if (start < 0 || end < start) throw new Error('AI 返回格式无法解析：' + out.slice(0, 120));
     const arr = JSON.parse(cleaned.slice(start, end + 1));
     if (!Array.isArray(arr)) throw new Error('AI 返回不是数组');
-    // 关联回角色卡（按名字匹配）
+    return arr;
+}
+
+async function matchCards(userInput) {
+    const chunks = buildCharChunks();
+    if (!chunks.length) throw new Error('角色库为空');
+    const sys = '你是一位懂角色扮演、懂人物设定的选卡助手。用户会告诉你此刻想玩的「感觉/需求」，你要从给出的角色卡清单中挑选最适合的 ' + settings.topN + ' 张，按匹配度从高到低排列。' +
+        '判断依据：需求与角色人设、标签、开场白风格的契合度。' +
+        '只输出 JSON 数组，格式：[{"name":"角色名(必须与清单中的名字完全一致)","match":85,"reason":"为什么适合，结合具体人设点写"}]，不要输出其他内容。';
     const chars = getAllChars();
-    return arr.map(item => {
-        const c = chars.find(x => charName(x) === String(item.name).trim()) || null;
-        return { name: String(item.name), match: Number(item.match) || 0, reason: String(item.reason || ''), char: c };
-    });
+    const all = [];
+    const errors = [];
+    // 分片全扫：每个分片都让 AI 挑一次，保证全库角色都进入过视野
+    for (const chunk of chunks) {
+        const user = '我现在的需求：' + userInput + '\n\n角色卡清单（这是角色库的一部分）：\n' + chunk.join('\n');
+        try {
+            const out = await llm([
+                { role: 'system', content: sys },
+                { role: 'user', content: user },
+            ]);
+            const arr = parseLLMArray(out);
+            for (const item of arr) {
+                const c = chars.find(x => charName(x) === String(item.name).trim()) || null;
+                all.push({ name: String(item.name), match: Number(item.match) || 0, reason: String(item.reason || ''), char: c });
+            }
+        } catch (e) {
+            errors.push(String(e.message || e));
+        }
+    }
+    if (!all.length) throw new Error(errors[0] || 'AI 没有返回任何推荐');
+    // 合并去重：同名保留 match 高者，按 match 降序，取 topN
+    const seen = new Map();
+    for (const item of all) {
+        const k = item.name;
+        if (!seen.has(k) || item.match > seen.get(k).match) seen.set(k, item);
+    }
+    return Array.from(seen.values()).sort((a, b) => b.match - a.match).slice(0, Number(settings.topN) || 5);
 }
 
 // ---------- 心情模式（本地关键词预筛 + 可选 AI 精推） ----------
