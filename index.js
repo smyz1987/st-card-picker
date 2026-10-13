@@ -311,10 +311,10 @@ function bindTabEvents(tab) {
             const $r = $panel.find('#st-cp-blind-result');
             if (!chars.length) { $r.html('<div class="st-cp-note">角色库为空</div>'); return; }
             const c = pickRandom(chars);
-            const first = charFirstMes(c, 120) || charDesc(c, 150) || '（这个角色没有开场白）';
+            const clue = buildBlindClue(c);
             $r.html(
-                '<div class="st-cp-note">盲盒开启 —— 只给你看开场白，猜猜是谁？</div>' +
-                '<div class="st-cp-blind-first">「' + escapeHtml(first) + '」</div>' +
+                '<div class="st-cp-note">盲盒开启 —— 看线索猜猜是谁？</div>' +
+                clue +
                 '<div class="st-cp-btn-row"><div class="st-cp-action" id="st-cp-blind-reveal">揭晓</div></div>'
             );
             $panel.on('click.stcpAct', '#st-cp-blind-reveal', function () {
@@ -322,6 +322,24 @@ function bindTabEvents(tab) {
             });
         });
     }
+}
+
+// 构建盲盒线索：开场白够长就用开场白；太短/没有就补人设和标签，保证线索量
+function buildBlindClue(c) {
+    const first = charFirstMes(c, 200);
+    const desc = charDesc(c, 160);
+    const tags = charTags(c);
+    const lines = [];
+    if (first && first.trim().length >= 15) {
+        lines.push('「' + first + '」');
+    } else if (first && first.trim().length > 0) {
+        lines.push('「' + first + '」（开场白太短，再给你补点线索）');
+    } else {
+        lines.push('（这个角色没有开场白，只能靠人设猜了）');
+    }
+    if (desc) lines.push('人设：' + desc);
+    if (tags) lines.push('标签：' + tags);
+    return '<div class="st-cp-blind-first">' + escapeHtml(lines.join('\n')) + '</div>';
 }
 
 // ---------- 魔法棒菜单入口注入 ----------
@@ -391,7 +409,7 @@ if (!document.getElementById(STYLE_ID)) {
 .st-cp-moods { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
 .st-cp-mood { padding:5px 12px; border-radius:20px; cursor:pointer; font-size:12px; background:rgba(217,167,167,.15); color:#D9A7A7; }
 .st-cp-mood:hover { background:rgba(217,167,167,.3); }
-.st-cp-blind-first { font-size:13px; padding:10px; border-radius:8px; background:rgba(217,167,167,.1); margin:6px 0; font-style:italic; }
+.st-cp-blind-first { font-size:13px; padding:10px; border-radius:8px; background:rgba(217,167,167,.1); margin:6px 0; font-style:italic; white-space:pre-wrap; word-break:break-all; line-height:1.6; }
 `;
     document.head.appendChild(style);
 }
