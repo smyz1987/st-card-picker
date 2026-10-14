@@ -216,10 +216,10 @@ function escapeHtml(s) {
 
 function buildSettingsHTML() {
     return '<div class="st-cp-title">AI 选卡师 · 设置</div>' +
-        '<div class="st-cp-row st-cp-toggle"><label>启用选卡师</label>' +
+        '<div class="st-cp-row st-cp-toggle"><label for="st-cp-enabled">启用选卡师</label>' +
         '<span class="st-cp-switch"><input type="checkbox" id="st-cp-enabled"' + (settings.enabled ? ' checked' : '') + '></span>' +
-        '<span class="st-cp-toggle-tip">' + (settings.enabled ? '已启用' : '已停用（入口会变灰）') + '</span></div>' +
-        '<div class="st-cp-row st-cp-toggle"><label>使用酒馆主 API</label>' +
+        '<span class="st-cp-toggle-tip" id="st-cp-enabled-tip">' + (settings.enabled ? '已启用' : '已停用（入口会变灰）') + '</span></div>' +
+        '<div class="st-cp-row st-cp-toggle"><label for="st-cp-usemain">使用酒馆主 API</label>' +
         '<span class="st-cp-switch"><input type="checkbox" id="st-cp-usemain"' + (settings.useMain ? ' checked' : '') + '></span>' +
         '<span class="st-cp-toggle-tip">复用酒馆当前主连接，副 API 不填</span></div>' +
         '<div class="st-cp-row" id="st-cp-row-baseurl"><label>API Base URL（副 API）</label><input type="text" id="st-cp-baseurl" placeholder="https://api.example.com" value="' + escapeHtml(settings.baseUrl) + '"></div>' +
@@ -317,6 +317,9 @@ function bindTabEvents(tab) {
             $panel.find('#st-cp-row-baseurl, #st-cp-row-apikey, #st-cp-row-model').toggle(!useMain);
         };
         $panel.off('click.stcpAct').on('click.stcpAct', '#st-cp-usemain', syncRows);
+        $panel.on('change.stcpAct', '#st-cp-enabled', function () {
+            $panel.find('#st-cp-enabled-tip').text($(this).is(':checked') ? '已启用' : '已停用（入口会变灰）');
+        });
         $panel.on('click.stcpAct', '#st-cp-fetch-models', async function () {
             const baseUrl = String($panel.find('#st-cp-baseurl').val() || '').trim();
             const apiKey = String($panel.find('#st-cp-apikey').val() || '').trim();
@@ -482,8 +485,8 @@ if (!document.getElementById(STYLE_ID)) {
 .st-cp-row input { width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px; border:1px solid var(--SmartThemeBorderColor,#666); background:var(--SmartThemeBlurTintColor,#2a2a3a); color:var(--SmartThemeMainColor,#e0e0e0); font-size:12px; outline:none; }
 .st-cp-toggle { display:flex; align-items:center; gap:8px; }
 .st-cp-toggle label { flex:1; margin:0; }
-.st-cp-switch { position:relative; width:34px; height:18px; flex-shrink:0; }
-.st-cp-switch input { opacity:0; width:0; height:0; position:absolute; }
+.st-cp-switch { position:relative; width:34px; height:18px; flex-shrink:0; cursor:pointer; }
+.st-cp-switch input { opacity:0; position:absolute; inset:0; width:100%; height:100%; margin:0; cursor:pointer; z-index:2; }
 .st-cp-switch::after { content:''; position:absolute; inset:0; border-radius:18px; background:#444; transition:.2s; }
 .st-cp-switch:has(input:checked)::after { background:#D9A7A7; }
 .st-cp-switch::before { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; z-index:1; transition:.2s; }
