@@ -535,12 +535,12 @@ if (!document.getElementById(STYLE_ID)) {
 .st-cp-card { display:flex; gap:10px; padding:8px; border-radius:10px; background:rgba(217,167,167,.12); margin-bottom:8px; }
 .st-cp-avatar { width:52px; height:52px; border-radius:8px; object-fit:cover; flex-shrink:0; }
 .st-cp-card-body { flex:1; min-width:0; }
-.st-cp-card-name { font-weight:700; color:#D9A7A7; margin-bottom:2px; }
-.st-cp-match { font-size:12px; color:#F2C9C9; margin:2px 0; }
-.st-cp-reason { font-size:12px; opacity:.9; margin:2px 0; }
-.st-cp-card-tags { font-size:11px; opacity:.7; margin:2px 0; }
-.st-cp-card-desc { font-size:12px; opacity:.85; margin:2px 0; word-break:break-all; }
-.st-cp-card-first { font-size:12px; opacity:.75; margin:2px 0; font-style:italic; word-break:break-all; }
+.st-cp-card-name { font-weight:700; color:#C9A076; margin-bottom:2px; }
+.st-cp-match { font-size:12px; color:#D9B48C; margin:2px 0; font-weight:700; }
+.st-cp-reason { font-size:12px; color:#C2A67F; margin:2px 0; line-height:1.5; }
+.st-cp-card-tags { font-size:11px; color:#A98F6D; margin:2px 0; }
+.st-cp-card-desc { font-size:12px; color:#C2A67F; margin:2px 0; word-break:break-all; }
+.st-cp-card-first { font-size:12px; color:#C2A67F; margin:2px 0; font-style:italic; word-break:break-all; }
 .st-cp-moods { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
 .st-cp-mood { padding:5px 12px; border-radius:20px; cursor:pointer; font-size:12px; background:rgba(217,167,167,.15); color:#D9A7A7; }
 .st-cp-mood:hover { background:rgba(217,167,167,.3); }
