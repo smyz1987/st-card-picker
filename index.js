@@ -39,7 +39,11 @@ async function mainQuiet(messages) {
     }
     const prompt = messages.map(m => (m.role === 'system' ? '【系统指令】' : '【用户需求】') + '\n' + m.content).join('\n\n');
     try {
-        const out = await generateQuietPrompt(prompt, { quietToLoud: true });
+        // 主 API 无响应时不能无限等待——60 秒超时并给出明确提示
+        const out = await Promise.race([
+            generateQuietPrompt(prompt, { quietToLoud: true }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('主 API 响应超时（60秒）——请检查酒馆主 API 是否已连接（发送框不应显示"未连接到 API"），或改用副 API')), 60000)),
+        ]);
         if (!out) throw new Error('主 API 返回为空');
         return String(out);
     } catch (e) {
@@ -341,14 +345,22 @@ function bindTabEvents(tab) {
             refreshWandState();
             $panel.find('#st-cp-body').prepend('<div class="st-cp-note st-cp-ok">✓ 已保存</div>');
         });
-        // 输入实时写回 settings（切换 tab 也不丢）
+        // 输入实时写回 settings（切换 tab 也不丢）——仅当设置 tab 可见时生效
         $panel.off('input.stcpLive').on('input.stcpLive', function () {
+            if (! $panel.find('#st-cp-baseurl').length) return;   // 不在设置 tab，忽略，防止覆盖
             settings.enabled = $panel.find('#st-cp-enabled').is(':checked');
             settings.useMain = $panel.find('#st-cp-usemain').is(':checked');
             settings.baseUrl = String($panel.find('#st-cp-baseurl').val() || '').trim();
             settings.apiKey = String($panel.find('#st-cp-apikey').val() || '').trim();
             settings.model = String($panel.find('#st-cp-model').val() || '').trim();
             settings.topN = Math.max(1, Math.min(10, Number($panel.find('#st-cp-topn').val()) || 5));
+        });
+        // 主 API 开关：切换即时生效 + 即时保存，避免"点一次没反应"
+        $panel.on('change.stcpAct', '#st-cp-usemain', function () {
+            settings.useMain = $(this).is(':checked');
+            syncRows();
+            saveSettings();
+            $panel.find('#st-cp-body').prepend('<div class="st-cp-note st-cp-ok">✓ 已切换：' + (settings.useMain ? '使用酒馆主 API' : '使用副 API') + '</div>');
         });
     } else if (tab === 'match') {
         $panel.off('click.stcpAct').on('click.stcpAct', '#st-cp-do-match', async function () {
