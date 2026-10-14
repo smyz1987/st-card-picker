@@ -420,7 +420,7 @@ function bindTabEvents(tab) {
                 clue +
                 '<div class="st-cp-btn-row"><div class="st-cp-action" id="st-cp-blind-reveal">揭晓</div></div>'
             );
-            $panel.on('click.stcpAct', '#st-cp-blind-reveal', function () {
+            $panel.off('click.stcpAct', '#st-cp-blind-reveal').on('click.stcpAct', '#st-cp-blind-reveal', function () {
                 $r.html(renderCharCard(c, '<div class="st-cp-match">🎁 揭晓</div>'));
             });
         });
