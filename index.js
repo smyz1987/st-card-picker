@@ -39,10 +39,10 @@ async function mainQuiet(messages) {
     }
     const prompt = messages.map(m => (m.role === 'system' ? '【系统指令】' : '【用户需求】') + '\n' + m.content).join('\n\n');
     try {
-        // 主 API 无响应时不能无限等待——40 秒超时并给出明确提示
+        // 长角色清单生成较慢（实测约 30-70 秒），90 秒超时兜底
         const out = await Promise.race([
             generateQuietPrompt(prompt, { quietToLoud: true }),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('主 API 响应超时（40秒）——请检查酒馆主 API 是否已连接（发送框不应显示"未连接到 API"），或改用副 API')), 40000)),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('主 API 响应超时（90秒）——请检查酒馆主 API 是否已连接（发送框不应显示"未连接到 API"），或改用副 API')), 90000)),
         ]);
         if (!out) throw new Error('主 API 返回为空');
         return String(out);
@@ -159,6 +159,7 @@ async function matchCards(userInput, onProgress) {
     const chars = getAllChars();
     const all = [];
     const errors = [];
+    let timeoutCount = 0;
     // 分片全扫：每个分片都让 AI 挑一次，保证全库角色都进入过视野
     for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
@@ -169,6 +170,7 @@ async function matchCards(userInput, onProgress) {
                 { role: 'system', content: sys },
                 { role: 'user', content: user },
             ]);
+            timeoutCount = 0;
             const arr = parseLLMArray(out);
             for (const item of arr) {
                 const c = chars.find(x => charName(x) === String(item.name).trim()) || null;
@@ -176,8 +178,12 @@ async function matchCards(userInput, onProgress) {
             }
         } catch (e) {
             const msg = String(e.message || e);
-            // API/连接类错误立即停止，别让用户干等；只是某片解析失败则继续下一片
-            if (/API|连接|超时|未连接|返回为空|network|Network|fetch|HTTP/i.test(msg)) throw new Error(msg);
+            // 明确的连接类错误立即停止；超时先记一次，连续两片超时才停（避免偶发慢生成误杀）
+            if (/未连接|连接失败|HTTP|Failed to fetch|network|Network|fetch|返回为空/i.test(msg)) throw new Error(msg);
+            if (/超时/i.test(msg)) {
+                timeoutCount++;
+                if (timeoutCount >= 2) throw new Error(msg);
+            }
             errors.push(msg);
         }
     }
