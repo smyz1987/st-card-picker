@@ -39,10 +39,10 @@ async function mainQuiet(messages) {
     }
     const prompt = messages.map(m => (m.role === 'system' ? '【系统指令】' : '【用户需求】') + '\n' + m.content).join('\n\n');
     try {
-        // 主 API 无响应时不能无限等待——60 秒超时并给出明确提示
+        // 主 API 无响应时不能无限等待——40 秒超时并给出明确提示
         const out = await Promise.race([
             generateQuietPrompt(prompt, { quietToLoud: true }),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('主 API 响应超时（60秒）——请检查酒馆主 API 是否已连接（发送框不应显示"未连接到 API"），或改用副 API')), 60000)),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('主 API 响应超时（40秒）——请检查酒馆主 API 是否已连接（发送框不应显示"未连接到 API"），或改用副 API')), 40000)),
         ]);
         if (!out) throw new Error('主 API 返回为空');
         return String(out);
@@ -150,7 +150,7 @@ function parseLLMArray(out) {
     return arr;
 }
 
-async function matchCards(userInput) {
+async function matchCards(userInput, onProgress) {
     const chunks = buildCharChunks();
     if (!chunks.length) throw new Error('角色库为空');
     const sys = '你是一位懂角色扮演、懂人物设定的选卡助手。用户会告诉你此刻想玩的「感觉/需求」，你要从给出的角色卡清单中挑选最适合的 ' + settings.topN + ' 张，按匹配度从高到低排列。' +
@@ -160,7 +160,9 @@ async function matchCards(userInput) {
     const all = [];
     const errors = [];
     // 分片全扫：每个分片都让 AI 挑一次，保证全库角色都进入过视野
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        if (typeof onProgress === 'function') onProgress(i + 1, chunks.length);
         const user = '我现在的需求：' + userInput + '\n\n角色卡清单（这是角色库的一部分）：\n' + chunk.join('\n');
         try {
             const out = await llm([
@@ -173,7 +175,10 @@ async function matchCards(userInput) {
                 all.push({ name: String(item.name), match: Number(item.match) || 0, reason: String(item.reason || ''), char: c });
             }
         } catch (e) {
-            errors.push(String(e.message || e));
+            const msg = String(e.message || e);
+            // API/连接类错误立即停止，别让用户干等；只是某片解析失败则继续下一片
+            if (/API|连接|超时|未连接|返回为空|network|Network|fetch|HTTP/i.test(msg)) throw new Error(msg);
+            errors.push(msg);
         }
     }
     if (!all.length) throw new Error(errors[0] || 'AI 没有返回任何推荐');
@@ -367,9 +372,11 @@ function bindTabEvents(tab) {
             const input = String($panel.find('#st-cp-input').val() || '').trim();
             if (!input) { $panel.find('#st-cp-result').html('<div class="st-cp-note">先描述一下你想玩的感觉～</div>'); return; }
             const $r = $panel.find('#st-cp-result');
-            $r.html('<div class="st-cp-note">AI 正在挑选中…</div>');
+            $r.html('<div class="st-cp-note">AI 正在全库挑选中…</div>');
             try {
-                const items = await matchCards(input);
+                const items = await matchCards(input, function (cur, total) {
+                    $r.html('<div class="st-cp-note">AI 正在挑选中…（扫描角色库 ' + cur + '/' + total + ' 片）</div>');
+                });
                 $r.html(items.map(item => {
                     const extra = '<div class="st-cp-match">匹配度 ' + item.match + '%</div><div class="st-cp-reason">' + escapeHtml(item.reason) + '</div>';
                     return renderCharCard(item.char, extra);
