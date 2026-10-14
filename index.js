@@ -2,6 +2,7 @@
 // 输入需求 → AI 从全部角色卡推荐最适合的（可配置独立 LLM API，OpenAI 兼容格式）
 // 玩法：智能匹配 / 随机骰子 / 心情模式 / 盲盒
 import { getContext } from '../../../extensions.js';
+import { generateQuietPrompt } from '../../../../script.js';
 
 const LS_SETTINGS = 'st-cp-settings';
 const PANEL_ID = 'st-cp-panel';
@@ -30,32 +31,27 @@ function charFirstMes(c, n) { return truncate(String((c && (c.first_mes || (c.da
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-// ---------- LLM 调用（OpenAI 兼容） ----------
-// 主 API：直接复用酒馆当前主 API（OpenAI 兼容源）的 baseUrl / key / 模型
-function resolveApi() {
-    if (settings.useMain) {
-        try {
-            const o = typeof oai_settings !== 'undefined' ? oai_settings : null;
-            const baseUrl = (o && o.chat_completion_proxy_url) || '';
-            const apiKey = (o && o.oai_api_key) || '';
-            let model = '';
-            if (o && o.models && Array.isArray(o.models)) {
-                const idx = Number(o.custom_model);
-                model = o.models[idx] || o.models[0] || '';
-            }
-            return { baseUrl: String(baseUrl), apiKey: String(apiKey), model: String(model), src: 'main' };
-        } catch { /* fall through */ }
-        return { baseUrl: '', apiKey: '', model: '', src: 'main' };
+// ---------- LLM 调用 ----------
+// 主 API：直接调用酒馆官方静默生成接口，真正跟随当前主连接（支持任意主源类型）
+async function mainQuiet(messages) {
+    if (typeof generateQuietPrompt !== 'function') {
+        throw new Error('跟随主 API 需要酒馆的静默生成接口，当前版本不可用，请改用副 API');
     }
-    return { baseUrl: String(settings.baseUrl || ''), apiKey: String(settings.apiKey || ''), model: String(settings.model || ''), src: 'custom' };
+    const prompt = messages.map(m => (m.role === 'system' ? '【系统指令】' : '【用户需求】') + '\n' + m.content).join('\n\n');
+    try {
+        const out = await generateQuietPrompt(prompt, { quietToLoud: true });
+        if (!out) throw new Error('主 API 返回为空');
+        return String(out);
+    } catch (e) {
+        throw new Error('跟随主 API 生成失败：' + (e && e.message ? e.message : e));
+    }
 }
 
 async function llm(messages) {
-    const api = resolveApi();
+    if (settings.useMain) return mainQuiet(messages);
+    const api = { baseUrl: String(settings.baseUrl || ''), apiKey: String(settings.apiKey || ''), model: String(settings.model || '') };
     if (!api.baseUrl || !api.apiKey || !api.model) {
-        throw new Error(api.src === 'main'
-            ? '酒馆主 API 未配置完成（Base URL / Key / 模型缺失），请先在酒馆主连接里设置，或改用副 API'
-            : '请先在设置里配置 API（Base URL / API Key / 模型）');
+        throw new Error('请先在设置里配置 API（Base URL / API Key / 模型）');
     }
     let url = String(api.baseUrl).trim().replace(/\/+$/, '');
     if (!/\/v\d+$/.test(url)) url += '/v1';
@@ -344,6 +340,15 @@ function bindTabEvents(tab) {
             saveSettings();
             refreshWandState();
             $panel.find('#st-cp-body').prepend('<div class="st-cp-note st-cp-ok">✓ 已保存</div>');
+        });
+        // 输入实时写回 settings（切换 tab 也不丢）
+        $panel.off('input.stcpLive').on('input.stcpLive', function () {
+            settings.enabled = $panel.find('#st-cp-enabled').is(':checked');
+            settings.useMain = $panel.find('#st-cp-usemain').is(':checked');
+            settings.baseUrl = String($panel.find('#st-cp-baseurl').val() || '').trim();
+            settings.apiKey = String($panel.find('#st-cp-apikey').val() || '').trim();
+            settings.model = String($panel.find('#st-cp-model').val() || '').trim();
+            settings.topN = Math.max(1, Math.min(10, Number($panel.find('#st-cp-topn').val()) || 5));
         });
     } else if (tab === 'match') {
         $panel.off('click.stcpAct').on('click.stcpAct', '#st-cp-do-match', async function () {
