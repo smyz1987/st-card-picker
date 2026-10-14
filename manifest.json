@@ -1,8 +1,8 @@
 {
     "display_name": "🎴 AI 选卡师",
-    "js": "index.js?v=1.2.2",
+    "js": "index.js?v=1.2.3",
     "author": "smyz1987",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "输入你想要的感觉/人设/剧情，AI 从全部角色卡中推荐最适合的；还有随机骰子、心情模式、盲盒等选卡玩法。",
     "requires": []
 }
