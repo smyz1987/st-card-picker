@@ -343,13 +343,20 @@ function openPanel() {
 function switchTab(tab) {
     const $panel = $('#' + PANEL_ID);
     if (!$panel.length) return;
+    // 离开智能匹配 tab 前保存已输入的需求文本，切回时恢复
+    const $oldInput = $panel.find('#st-cp-input');
+    if ($oldInput.length) $panel.data('stcp-match-input', $oldInput.val());
     $panel.find('.st-cp-tab').removeClass('active').filter('[data-tab="' + tab + '"]').addClass('active');
     const $body = $panel.find('#st-cp-body');
     if (tab === 'settings') $body.html(buildSettingsHTML());
     else if (tab === 'dice') $body.html(buildDiceHTML());
     else if (tab === 'mood') $body.html(buildMoodHTML());
     else if (tab === 'blind') $body.html(buildBlindHTML());
-    else $body.html(buildMatchHTML());
+    else {
+        $body.html(buildMatchHTML());
+        const saved = $panel.data('stcp-match-input');
+        if (saved) $body.find('#st-cp-input').val(saved);
+    }
     bindTabEvents(tab);
 }
 
@@ -390,6 +397,7 @@ function bindTabEvents(tab) {
             settings.topN = Math.max(1, Math.min(10, Number($panel.find('#st-cp-topn').val()) || 5));
             saveSettings();
             refreshWandState();
+            $panel.find('#st-cp-body').find('.st-cp-ok').remove();
             $panel.find('#st-cp-body').prepend('<div class="st-cp-note st-cp-ok">✓ 已保存</div>');
         });
         // 输入实时写回 settings（切换 tab 也不丢）——仅当设置 tab 可见时生效
@@ -407,6 +415,7 @@ function bindTabEvents(tab) {
             settings.useMain = $(this).is(':checked');
             syncRows();
             saveSettings();
+            $panel.find('#st-cp-body').find('.st-cp-ok').remove();
             $panel.find('#st-cp-body').prepend('<div class="st-cp-note st-cp-ok">✓ 已切换：' + (settings.useMain ? '使用酒馆主 API' : '使用副 API') + '</div>');
         });
     } else if (tab === 'match') {
