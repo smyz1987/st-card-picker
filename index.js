@@ -60,16 +60,28 @@ async function llm(messages) {
     let url = String(api.baseUrl).trim().replace(/\/+$/, '');
     if (!/\/v\d+$/.test(url)) url += '/v1';
     url += '/chat/completions';
-    const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.apiKey },
-        body: JSON.stringify({
-            model: api.model,
-            messages: messages,
-            temperature: 0.7,
-            max_tokens: 1600,
-        }),
-    });
+    // 副 API 也设超时，避免接口挂起时界面一直"挑选中"
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120000);
+    let res;
+    try {
+        res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.apiKey },
+            body: JSON.stringify({
+                model: api.model,
+                messages: messages,
+                temperature: 0.7,
+                max_tokens: 1600,
+            }),
+            signal: ctrl.signal,
+        });
+    } catch (e) {
+        if (e && e.name === 'AbortError') throw new Error('副 API 响应超时（120秒）——请检查 Base URL / Key / 网络');
+        throw e;
+    } finally {
+        clearTimeout(timer);
+    }
     if (!res.ok) {
         let msg = 'HTTP ' + res.status;
         try { const j = await res.json(); msg += ': ' + (j.error && (j.error.message || j.error)) || JSON.stringify(j).slice(0, 200); } catch { /* ignore */ }
@@ -88,7 +100,12 @@ async function fetchModels(baseUrl, apiKey) {
     const tryUrls = /\/v\d+$/i.test(url) ? [url + '/models'] : [url + '/models', url + '/v1/models'];
     for (const u of tryUrls) {
         try {
-            const res = await fetch(u, { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 15000);
+            let res;
+            try {
+                res = await fetch(u, { headers: { 'Authorization': 'Bearer ' + apiKey }, signal: ctrl.signal });
+            } finally { clearTimeout(timer); }
             if (!res.ok) continue;
             const j = await res.json();
             const models = (j && Array.isArray(j.data)) ? j.data.map(m => m && m.id).filter(Boolean) : [];
@@ -150,6 +167,24 @@ function parseLLMArray(out) {
     return arr;
 }
 
+// 角色名归一化：去掉空白/标点/括号备注，用于 AI 返回名与角色卡名对不上时的模糊匹配
+function normalizeName(s) {
+    return String(s || '').replace(/[\s\u3000\t\r\n（）()【】\[\]『』「」《》〈〉""''：:、，,。.!！?？·—\-_*~`·]+/g, '').toLowerCase();
+}
+function findCharFuzzy(name, chars) {
+    const n = normalizeName(name);
+    if (!n) return null;
+    // 1) 精确名
+    let c = chars.find(x => charName(x) === String(name).trim());
+    if (c) return c;
+    // 2) 归一化后精确
+    c = chars.find(x => normalizeName(charName(x)) === n);
+    if (c) return c;
+    // 3) 相互包含（AI 可能截断/多字）
+    c = chars.find(x => { const cn = normalizeName(charName(x)); return cn && (cn.includes(n) || n.includes(cn)) && Math.min(cn.length, n.length) >= 2; });
+    return c || null;
+}
+
 async function matchCards(userInput, onProgress) {
     const chunks = buildCharChunks();
     if (!chunks.length) throw new Error('角色库为空');
@@ -173,7 +208,7 @@ async function matchCards(userInput, onProgress) {
             timeoutCount = 0;
             const arr = parseLLMArray(out);
             for (const item of arr) {
-                const c = chars.find(x => charName(x) === String(item.name).trim()) || null;
+                const c = findCharFuzzy(String(item.name), chars) || null;
                 all.push({ name: String(item.name), match: Number(item.match) || 0, reason: String(item.reason || ''), char: c });
             }
         } catch (e) {
@@ -328,6 +363,7 @@ function bindTabEvents(tab) {
             $panel.find('#st-cp-row-baseurl, #st-cp-row-apikey, #st-cp-row-model').toggle(!useMain);
         };
         $panel.off('click.stcpAct').on('click.stcpAct', '#st-cp-usemain', syncRows);
+        syncRows();   // 打开设置页时立即同步一次显隐
         $panel.on('change.stcpAct', '#st-cp-enabled', function () {
             $panel.find('#st-cp-enabled-tip').text($(this).is(':checked') ? '已启用' : '已停用（入口会变灰）');
         });
