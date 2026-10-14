@@ -7,7 +7,7 @@ const LS_SETTINGS = 'st-cp-settings';
 const PANEL_ID = 'st-cp-panel';
 const WAND_ID = 'st-cp-wand';
 
-let settings = { baseUrl: '', apiKey: '', model: '', topN: 5 };
+let settings = { enabled: true, useMain: false, baseUrl: '', apiKey: '', model: '', topN: 5 };
 
 function loadSettings() {
     try { settings = Object.assign(settings, JSON.parse(localStorage.getItem(LS_SETTINGS) || '{}')); } catch { /* ignore */ }
@@ -31,18 +31,40 @@ function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 // ---------- LLM 调用（OpenAI 兼容） ----------
-async function llm(messages) {
-    if (!settings.baseUrl || !settings.apiKey || !settings.model) {
-        throw new Error('请先在设置里配置 API（Base URL / API Key / 模型）');
+// 主 API：直接复用酒馆当前主 API（OpenAI 兼容源）的 baseUrl / key / 模型
+function resolveApi() {
+    if (settings.useMain) {
+        try {
+            const o = typeof oai_settings !== 'undefined' ? oai_settings : null;
+            const baseUrl = (o && o.chat_completion_proxy_url) || '';
+            const apiKey = (o && o.oai_api_key) || '';
+            let model = '';
+            if (o && o.models && Array.isArray(o.models)) {
+                const idx = Number(o.custom_model);
+                model = o.models[idx] || o.models[0] || '';
+            }
+            return { baseUrl: String(baseUrl), apiKey: String(apiKey), model: String(model), src: 'main' };
+        } catch { /* fall through */ }
+        return { baseUrl: '', apiKey: '', model: '', src: 'main' };
     }
-    let url = String(settings.baseUrl).trim().replace(/\/+$/, '');
+    return { baseUrl: String(settings.baseUrl || ''), apiKey: String(settings.apiKey || ''), model: String(settings.model || ''), src: 'custom' };
+}
+
+async function llm(messages) {
+    const api = resolveApi();
+    if (!api.baseUrl || !api.apiKey || !api.model) {
+        throw new Error(api.src === 'main'
+            ? '酒馆主 API 未配置完成（Base URL / Key / 模型缺失），请先在酒馆主连接里设置，或改用副 API'
+            : '请先在设置里配置 API（Base URL / API Key / 模型）');
+    }
+    let url = String(api.baseUrl).trim().replace(/\/+$/, '');
     if (!/\/v\d+$/.test(url)) url += '/v1';
     url += '/chat/completions';
     const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + settings.apiKey },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.apiKey },
         body: JSON.stringify({
-            model: settings.model,
+            model: api.model,
             messages: messages,
             temperature: 0.7,
             max_tokens: 1600,
@@ -57,6 +79,23 @@ async function llm(messages) {
     const text = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
     if (!text) throw new Error('API 返回为空');
     return String(text);
+}
+
+// 拉取模型列表（OpenAI 兼容 /models 接口），填到模型下拉
+async function fetchModels(baseUrl, apiKey) {
+    let url = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (!url) return [];
+    const tryUrls = /\/v\d+$/i.test(url) ? [url + '/models'] : [url + '/models', url + '/v1/models'];
+    for (const u of tryUrls) {
+        try {
+            const res = await fetch(u, { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            if (!res.ok) continue;
+            const j = await res.json();
+            const models = (j && Array.isArray(j.data)) ? j.data.map(m => m && m.id).filter(Boolean) : [];
+            if (models.length) return models;
+        } catch { /* try next */ }
+    }
+    return [];
 }
 
 // ---------- 智能匹配 ----------
@@ -177,12 +216,20 @@ function escapeHtml(s) {
 
 function buildSettingsHTML() {
     return '<div class="st-cp-title">AI 选卡师 · 设置</div>' +
-        '<div class="st-cp-row"><label>API Base URL</label><input type="text" id="st-cp-baseurl" placeholder="https://api.example.com" value="' + escapeHtml(settings.baseUrl) + '"></div>' +
-        '<div class="st-cp-row"><label>API Key</label><input type="password" id="st-cp-apikey" placeholder="sk-..." value="' + escapeHtml(settings.apiKey) + '"></div>' +
-        '<div class="st-cp-row"><label>模型</label><input type="text" id="st-cp-model" placeholder="gpt-4o-mini / gemini-..." value="' + escapeHtml(settings.model) + '"></div>' +
+        '<div class="st-cp-row st-cp-toggle"><label>启用选卡师</label>' +
+        '<span class="st-cp-switch"><input type="checkbox" id="st-cp-enabled"' + (settings.enabled ? ' checked' : '') + '></span>' +
+        '<span class="st-cp-toggle-tip">' + (settings.enabled ? '已启用' : '已停用（入口会变灰）') + '</span></div>' +
+        '<div class="st-cp-row st-cp-toggle"><label>使用酒馆主 API</label>' +
+        '<span class="st-cp-switch"><input type="checkbox" id="st-cp-usemain"' + (settings.useMain ? ' checked' : '') + '></span>' +
+        '<span class="st-cp-toggle-tip">复用酒馆当前主连接，副 API 不填</span></div>' +
+        '<div class="st-cp-row" id="st-cp-row-baseurl"><label>API Base URL（副 API）</label><input type="text" id="st-cp-baseurl" placeholder="https://api.example.com" value="' + escapeHtml(settings.baseUrl) + '"></div>' +
+        '<div class="st-cp-row" id="st-cp-row-apikey"><label>API Key（副 API）</label><input type="password" id="st-cp-apikey" placeholder="sk-..." value="' + escapeHtml(settings.apiKey) + '"></div>' +
+        '<div class="st-cp-row" id="st-cp-row-model"><label>模型 <span class="st-cp-mini-btn" id="st-cp-fetch-models">🔄 自动拉取</span></label>' +
+        '<input type="text" id="st-cp-model" list="st-cp-models" placeholder="gpt-4o-mini / gemini-..." value="' + escapeHtml(settings.model) + '">' +
+        '<datalist id="st-cp-models"></datalist></div>' +
         '<div class="st-cp-row"><label>推荐数量</label><input type="number" id="st-cp-topn" min="1" max="10" value="' + Number(settings.topN) + '"></div>' +
         '<div class="st-cp-btn-row"><div class="st-cp-action" id="st-cp-save-settings">保存设置</div></div>' +
-        '<div class="st-cp-note">OpenAI 兼容格式；支持大多数 API（含各类中转/代理）。保存后即可使用。</div>';
+        '<div class="st-cp-note">智能匹配/生日等需要调用的玩法走 API：勾选「使用酒馆主 API」则复用主连接；不勾选则用下方副 API。点「🔄 自动拉取」可获取模型列表。</div>';
 }
 
 function buildMatchHTML() {
@@ -264,12 +311,35 @@ function bindTabEvents(tab) {
     const $panel = $('#' + PANEL_ID);
     if (! $panel.length) return;
     if (tab === 'settings') {
+        // 副 API 行与主 API 开关联动
+        const syncRows = function () {
+            const useMain = $panel.find('#st-cp-usemain').is(':checked');
+            $panel.find('#st-cp-row-baseurl, #st-cp-row-apikey, #st-cp-row-model').toggle(!useMain);
+        };
+        $panel.off('click.stcpAct').on('click.stcpAct', '#st-cp-usemain', syncRows);
+        $panel.on('click.stcpAct', '#st-cp-fetch-models', async function () {
+            const baseUrl = String($panel.find('#st-cp-baseurl').val() || '').trim();
+            const apiKey = String($panel.find('#st-cp-apikey').val() || '').trim();
+            const $tip = $(this);
+            if (!baseUrl || !apiKey) { $tip.text('⚠ 先填 Base URL / Key'); return; }
+            $tip.text('⏳ 拉取中…');
+            try {
+                const models = await fetchModels(baseUrl, apiKey);
+                const $dl = $panel.find('#st-cp-models');
+                $dl.empty();
+                models.forEach(m => $dl.append('<option value="' + escapeHtml(m) + '">'));
+                $tip.text(models.length ? '✅ 已拉取 ' + models.length + ' 个' : '⚠ 未获取到模型');
+            } catch { $tip.text('⚠ 拉取失败'); }
+        });
         $panel.on('click.stcpAct', '#st-cp-save-settings', function () {
+            settings.enabled = $panel.find('#st-cp-enabled').is(':checked');
+            settings.useMain = $panel.find('#st-cp-usemain').is(':checked');
             settings.baseUrl = String($panel.find('#st-cp-baseurl').val() || '').trim();
             settings.apiKey = String($panel.find('#st-cp-apikey').val() || '').trim();
             settings.model = String($panel.find('#st-cp-model').val() || '').trim();
             settings.topN = Math.max(1, Math.min(10, Number($panel.find('#st-cp-topn').val()) || 5));
             saveSettings();
+            refreshWandState();
             $panel.find('#st-cp-body').prepend('<div class="st-cp-note st-cp-ok">✓ 已保存</div>');
         });
     } else if (tab === 'match') {
@@ -350,6 +420,20 @@ function buildBlindClue(c) {
 }
 
 // ---------- 魔法棒菜单入口注入 ----------
+function refreshWandState() {
+    const el = document.getElementById(WAND_ID);
+    if (!el) return;
+    if (settings.enabled) {
+        el.style.opacity = '1';
+        el.textContent = '🎴 AI 选卡师';
+        el.title = 'AI 选卡师：智能匹配 / 骰子 / 心情 / 盲盒';
+    } else {
+        el.style.opacity = '.45';
+        el.textContent = '🎴 AI 选卡师（已停用）';
+        el.title = '已停用。点击打开设置可重新启用';
+    }
+}
+
 function injectButton() {
     const menu = document.getElementById('extensionsMenu');
     if (!menu || document.getElementById(WAND_ID)) return;
@@ -357,14 +441,13 @@ function injectButton() {
     el.id = WAND_ID;
     el.className = 'list-group-item flex-container flexGap5 interactable';
     el.setAttribute('tabindex', '0');
-    el.title = 'AI 选卡师：智能匹配 / 骰子 / 心情 / 盲盒';
-    el.textContent = '🎴 AI 选卡师';
     el.addEventListener('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
         openPanel();
     });
     menu.appendChild(el);
+    refreshWandState();
 }
 
 $(function () {
@@ -372,6 +455,7 @@ $(function () {
     // 兜底重注入（酒馆重绘/菜单重建后）
     setInterval(function () {
         if (!document.getElementById(WAND_ID)) injectButton();
+        else refreshWandState();
     }, 3000);
 });
 
@@ -396,6 +480,17 @@ if (!document.getElementById(STYLE_ID)) {
 .st-cp-row { margin-bottom:8px; }
 .st-cp-row label { display:block; font-size:12px; opacity:.8; margin-bottom:2px; }
 .st-cp-row input { width:100%; box-sizing:border-box; padding:5px 8px; border-radius:6px; border:1px solid var(--SmartThemeBorderColor,#666); background:var(--SmartThemeBlurTintColor,#2a2a3a); color:var(--SmartThemeMainColor,#e0e0e0); font-size:12px; outline:none; }
+.st-cp-toggle { display:flex; align-items:center; gap:8px; }
+.st-cp-toggle label { flex:1; margin:0; }
+.st-cp-switch { position:relative; width:34px; height:18px; flex-shrink:0; }
+.st-cp-switch input { opacity:0; width:0; height:0; position:absolute; }
+.st-cp-switch::after { content:''; position:absolute; inset:0; border-radius:18px; background:#444; transition:.2s; }
+.st-cp-switch:has(input:checked)::after { background:#D9A7A7; }
+.st-cp-switch::before { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; z-index:1; transition:.2s; }
+.st-cp-switch:has(input:checked)::before { transform:translateX(16px); }
+.st-cp-toggle-tip { font-size:11px; opacity:.7; flex-shrink:0; }
+.st-cp-mini-btn { display:inline-block; padding:2px 8px; border-radius:12px; cursor:pointer; font-size:11px; background:rgba(217,167,167,.2); color:#D9A7A7; margin-left:6px; }
+.st-cp-mini-btn:hover { background:rgba(217,167,167,.35); }
 .st-cp-note { font-size:12px; opacity:.75; margin:6px 0; }
 .st-cp-ok { color:#A9C3A0; }
 .st-cp-err { color:#E88; }
